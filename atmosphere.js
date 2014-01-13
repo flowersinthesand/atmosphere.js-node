@@ -35,7 +35,7 @@
 
     "use strict";
 
-    var version = "2.1.2-javascript",
+    var version = "2.1.3-javascript",
         atmosphere = {},
         guid,
         requests = [],
@@ -1558,7 +1558,7 @@
 
                 if (rq.contentType !== '') {
                     //Eurk!
-                    url += "&Content-Type=" + rq.transport === 'websocket' ? rq.contentType : encodeURIComponent(rq.contentType);
+                    url += "&Content-Type=" + (rq.transport === 'websocket' ? rq.contentType : encodeURIComponent(rq.contentType));
                 }
 
                 if (rq.enableProtocol) {
