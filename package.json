@@ -26,5 +26,6 @@
     "jsdom": "0.8.10",
     "ws": "0.4.31",
     "eventsource": "0.0.10"
-  }
+  },
+  "browser": "./atmosphere.js"
 }
