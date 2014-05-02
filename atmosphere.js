@@ -35,7 +35,7 @@
 
     "use strict";
 
-    var version = "2.1.3-javascript",
+    var version = "2.1.4-javascript",
         atmosphere = {},
         guid,
         requests = [],
@@ -286,6 +286,7 @@
                 // Wait to be sure we have the full message before closing.
                 if (_response.partialMessage === "" && (rq.transport === 'streaming') && (ajaxRequest.responseText.length > rq.maxStreamingLength)) {
                     _response.messages = [];
+                    rq.reconnectingOnLength = true;
                     _invokeClose(true);
                     _disconnect();
                     _clearState();
@@ -1679,6 +1680,9 @@
                         var update = false;
 
                         if (rq.transport === 'streaming' && rq.readyState > 2 && ajaxRequest.readyState === 4) {
+                            if (rq.reconnectingOnLength) {
+                                return;
+                            }
                             _clearState();
                             reconnectF();
                             return;
@@ -1887,7 +1891,7 @@
             function _reconnect(ajaxRequest, request, reconnectInterval) {
                 if (request.reconnect || (request.suspend && _subscribed)) {
                     var status = 0;
-                    if (ajaxRequest && ajaxRequest.readyState !== 0) {
+                    if (ajaxRequest && ajaxRequest.readyState > 1) {
                         status = ajaxRequest.status > 1000 ? 0 : ajaxRequest.status;
                     }
                     _response.status = status === 0 ? 204 : status;
