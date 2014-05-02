@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Jeanfrancois Arcand
+ * Copyright 2014 Jeanfrancois Arcand
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@
 
     "use strict";
 
-    var version = "2.1.4-javascript",
+    var version = "2.1.5-javascript",
         atmosphere = {},
         guid,
         requests = [],
@@ -115,6 +115,7 @@
                 readResponsesHeaders: false,
                 maxReconnectOnClose: 5,
                 enableProtocol: true,
+                pollingInterval : 0,
                 onError: function (response) {
                 },
                 onClose: function (response) {
@@ -287,10 +288,11 @@
                 if (_response.partialMessage === "" && (rq.transport === 'streaming') && (ajaxRequest.responseText.length > rq.maxStreamingLength)) {
                     _response.messages = [];
                     rq.reconnectingOnLength = true;
+                    rq.isReopen = true;
                     _invokeClose(true);
                     _disconnect();
                     _clearState();
-                    _reconnect(ajaxRequest, rq, 0);
+                    _reconnect(ajaxRequest, rq, rq.pollingInterval);
                 }
             }
 
@@ -322,6 +324,8 @@
                     closeR.url = url;
                     closeR.contentType = "text/plain";
                     closeR.transport = 'polling';
+                    closeR.method = 'GET';
+                    closeR.data = '';
                     closeR.async = false;
                     _pushOnClose("", closeR);
                 }
@@ -368,7 +372,7 @@
                     _activeRequest = null;
                 }
                 if (_websocket != null) {
-                    if (_websocket.webSocketOpened) {
+                    if (_websocket.canSendMessage) {
                         _websocket.close();
                     }
                     _websocket = null;
@@ -960,7 +964,7 @@
                                     // _readHeaders(_jqxhr, rq);
 
                                     if (!rq.executeCallbackBeforeReconnect) {
-                                        _reconnect(_jqxhr, rq, 0);
+                                        _reconnect(_jqxhr, rq, rq.pollingInterval);
                                     }
 
                                     if (msg != null && typeof msg !== 'string') {
@@ -977,7 +981,7 @@
                                     }
 
                                     if (rq.executeCallbackBeforeReconnect) {
-                                        _reconnect(_jqxhr, rq, 0);
+                                        _reconnect(_jqxhr, rq, rq.pollingInterval);
                                     }
                                 } else {
                                     atmosphere.util.log(_request.logLevel, ["JSONP reconnect maximum try reached " + _request.requestCount]);
@@ -990,7 +994,7 @@
                         }, 50);
                     },
                     abort: function () {
-                        if (script.clean) {
+                        if (script && script.clean) {
                             script.clean();
                         }
                     }
@@ -1025,7 +1029,7 @@
              * @private
              */
             function _buildWebSocketUrl() {
-                return atmosphere.util.getAbsoluteURL(_attachHeaders(_request)).replace(/^http/, "ws");
+                return _attachHeaders(_request, atmosphere.util.getAbsoluteURL(_request.url)).replace(/^http/, "ws");
             }
 
             /**
@@ -1233,12 +1237,12 @@
 
                     var reopening = webSocketOpened;
 
-                    webSocketOpened = true;
                     if(_websocket != null) {
-                        _websocket.webSocketOpened = webSocketOpened;
+                        _websocket.canSendMessage = true;
                     }
 
                     if (!_request.enableProtocol) {
+                        webSocketOpened = true;
                         if (reopening) {
                             _open('re-opening', "websocket", _request);
                         } else {
@@ -1256,6 +1260,12 @@
 
                 _websocket.onmessage = function (message) {
                     _timeout(_request);
+
+                    // We only consider it opened if we get the handshake data
+                    // https://github.com/Atmosphere/atmosphere-javascript/issues/74
+                    if (_request.enableProtocol) {
+                        webSocketOpened = true;
+                    }
 
                     _response.state = 'messageReceived';
                     _response.status = 200;
@@ -1360,7 +1370,9 @@
                     }
                 };
 
-                if (_websocket.url === undefined) {
+                var ua = navigator.userAgent.toLowerCase();
+                var isAndroid = ua.indexOf("android") > -1;
+                if (isAndroid && _websocket.url === undefined) {
                     // Android 4.1 does not really support websockets and fails silently
                     _websocket.onclose({
                         reason: "Android 4.1 does not support websockets.",
@@ -1727,7 +1739,7 @@
                             if (atmosphere.util.trim(responseText).length === 0 && rq.transport === 'long-polling') {
                                 // For browser that aren't support onabort
                                 if (!ajaxRequest.hasData) {
-                                    _reconnect(ajaxRequest, rq, 0);
+                                    _reconnect(ajaxRequest, rq, rq.pollingInterval);
                                 } else {
                                     ajaxRequest.hasData = false;
                                 }
@@ -1798,14 +1810,14 @@
 
                             var isAllowedToReconnect = request.transport !== 'streaming' && request.transport !== 'polling';
                             if (isAllowedToReconnect && !rq.executeCallbackBeforeReconnect) {
-                                _reconnect(ajaxRequest, rq, 0);
+                                _reconnect(ajaxRequest, rq, rq.pollingInterval);
                             }
 
                             if (_response.responseBody.length !== 0 && !skipCallbackInvocation)
                                 _invokeCallback();
 
                             if (isAllowedToReconnect && rq.executeCallbackBeforeReconnect) {
-                                _reconnect(ajaxRequest, rq, 0);
+                                _reconnect(ajaxRequest, rq, rq.pollingInterval);
                             }
 
                             _verifyStreamingLength(ajaxRequest, rq);
@@ -1817,6 +1829,7 @@
                         _subscribed = true;
                     } catch (e) {
                         atmosphere.util.log(rq.logLevel, ["Unable to connect to " + rq.url]);
+                        _onError(0, e);
                     }
 
                 } else {
@@ -2366,7 +2379,7 @@
                         data = msg;
                     }
 
-                    if (!_websocket.webSocketOpened) {
+                    if (!_websocket.canSendMessage) {
                         atmosphere.util.error("WebSocket not connected.");
                         return;
                     }
@@ -2771,7 +2784,15 @@
             return s.join("&").replace(/%20/g, "+");
         },
 
-        storage: !!(window.localStorage && window.StorageEvent),
+        storage: function () {
+            try {
+                return !!(window.localStorage && window.StorageEvent);
+            } catch (e) {
+                //Firefox throws an exception here, see 
+                //https://bugzilla.mozilla.org/show_bug.cgi?id=748620
+                return false;
+            }
+        },
 
         iterate: function (fn, interval) {
             var timeoutId;
@@ -2983,9 +3004,9 @@
         },
 
         checkCORSSupport: function () {
-            if (atmosphere.util.browser.msie && !window.XDomainRequest) {
+            if (atmosphere.util.browser.msie && !window.XDomainRequest && +atmosphere.util.browser.version.split(".")[0] < 11) {
                 return true;
-            } else if (atmosphere.util.browser.opera && atmosphere.util.browser.version < 12.0) {
+            } else if (atmosphere.util.browser.opera && +atmosphere.util.browser.version.split(".") < 12.0) {
                 return true;
             }
 
@@ -3031,7 +3052,7 @@
         }
 
         // The storage event of Internet Explorer and Firefox 3 works strangely
-        if (atmosphere.util.browser.msie || (atmosphere.util.browser.mozilla && atmosphere.util.browser.version.split(".")[0] === "1")) {
+        if (atmosphere.util.browser.msie || (atmosphere.util.browser.mozilla && +atmosphere.util.browser.version.split(".")[0] === 1)) {
             atmosphere.util.storage = false;
         }
     })();
