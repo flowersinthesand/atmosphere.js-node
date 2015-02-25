@@ -35,7 +35,7 @@
 
     "use strict";
 
-    var version = "2.2.4-javascript",
+    var version = "2.2.5-javascript",
         atmosphere = {},
         guid,
         requests = [],
@@ -190,6 +190,7 @@
                 },
                 ackInterval: 0,
                 closeAsync: false,
+                reconnectOnServerError: true,
                 onError: function (response) {
                 },
                 onClose: function (response) {
@@ -285,6 +286,13 @@
              * @private
              */
             var _requestCount = 0;
+
+            /**
+             * The Heartbeat bytes send by the server.
+             * @type {string}
+             * @private
+             */
+            var _heartbeatPadding = ' ';
 
             /**
              * {boolean} If request is currently aborded.
@@ -1053,6 +1061,7 @@
                             if (rq.reconnect) {
                                 if (rq.maxRequest === -1 || rq.requestCount++ < rq.maxRequest) {
                                     // _readHeaders(_jqxhr, rq);
+                                    _timeout(rq);
 
                                     if (!rq.executeCallbackBeforeReconnect) {
                                         _reconnect(_jqxhr, rq, rq.pollingInterval);
@@ -1065,7 +1074,6 @@
                                             // The message was partial
                                         }
                                     }
-
                                     var skipCallbackInvocation = _trackMessageSize(msg, rq, _response);
                                     if (!skipCallbackInvocation) {
                                         _prepareCallback(_response.responseBody, "messageReceived", 200, rq.transport);
@@ -1496,15 +1504,16 @@
                     }
 
                     var interval = parseInt(atmosphere.util.trim(messages[pos + 1]), 10);
-                    var paddingData = messages[pos + 2];
+                    _heartbeatPadding = messages[pos + 2];
 
                     if (!isNaN(interval) && interval > 0) {
                         var _pushHeartbeat = function () {
-                            _push(paddingData);
+                            _push(_heartbeatPadding);
                             request.heartbeatTimer = setTimeout(_pushHeartbeat, interval);
                         };
                         request.heartbeatTimer = setTimeout(_pushHeartbeat, interval);
                     }
+
 
                     if (request.transport !== 'long-polling') {
                         _triggerOpen(request);
@@ -1538,9 +1547,12 @@
             }
 
             function _timeout(_request) {
+                _request.timedOut = false;
+
                 clearTimeout(_request.id);
                 if (_request.timeout > 0 && _request.transport !== 'polling') {
                     _request.id = setTimeout(function () {
+                        _request.timedOut = true;
                         _onClientTimeout(_request);
                         _disconnect();
                         _clearState();
@@ -1852,6 +1864,11 @@
                                 status = ajaxRequest.status > 1000 ? 0 : ajaxRequest.status;
                             }
 
+                            if (!rq.reconnectOnServerError && (status >= 300 && status < 600)) {
+                                _onError(status, ajaxRequest.statusText);
+                                return;
+                            }
+
                             if (status >= 300 || status === 0) {
                                 disconnected();
                                 return;
@@ -2113,7 +2130,6 @@
                 var transport = rq.transport;
                 var lastIndex = 0;
                 var xdr = new window.XDomainRequest();
-
                 var reconnect = function () {
                     if (rq.transport === "long-polling" && (rq.reconnect && (rq.maxRequest === -1 || rq.requestCount++ < rq.maxRequest))) {
                         xdr.status = 200;
@@ -2162,6 +2178,18 @@
 
                 // Handles close event
                 xdr.onload = function () {
+                    // Prevent onerror callback to be called
+                    if (_request.timedOut) {
+                        _request.timedOut = false;
+                        _clearState();
+                        rq.lastIndex = 0;
+                        if (rq.reconnect && _requestCount++ < rq.maxReconnectOnClose) {
+                            _open('re-connecting', request.transport, request);
+                            reconnect();
+                        } else {
+                            _onError(0, "maxReconnectOnClose reached");
+                        }
+                    }
                 };
 
                 var handle = function (xdr) {
@@ -2714,7 +2742,8 @@
                         _localSocketF(_response.responseBody);
                     }
 
-                    if (_response.responseBody.length === 0 && _response.state === "messageReceived") {
+                    if ((_response.responseBody.length === 0 ||
+                        (isString && _heartbeatPadding === _response.responseBody)) && _response.state === "messageReceived") {
                         continue;
                     }
 
