@@ -35,7 +35,7 @@
 
     "use strict";
 
-    var version = "2.2.2-javascript",
+    var version = "2.2.3-javascript",
         atmosphere = {},
         guid,
         requests = [],
@@ -187,6 +187,7 @@
                     server: null
                 },
                 ackInterval: 0,
+                closeAsync: false,
                 onError: function (response) {
                 },
                 onClose: function (response) {
@@ -393,7 +394,7 @@
                     closeR.transport = 'polling';
                     closeR.method = 'GET';
                     closeR.data = '';
-                    closeR.async = false;
+                    closeR.async = rq.closeAsync;
                     _pushOnClose("", closeR);
                 }
             }
@@ -1758,6 +1759,7 @@
                 var reconnectF = function () {
                     rq.lastIndex = 0;
                     if (rq.reconnect && _requestCount++ < rq.maxReconnectOnClose) {
+                        _response.ffTryingReconnect = true;
                         _open('re-connecting', request.transport, request);
                         _reconnect(ajaxRequest, rq, request.reconnectInterval);
                     } else {
@@ -2390,7 +2392,6 @@
                 }
                 rq.transport = "polling";
                 rq.method = "GET";
-                rq.async = false;
                 rq.withCredentials = false;
                 rq.reconnect = false;
                 rq.force = true;
@@ -3243,7 +3244,26 @@
     });
 
     atmosphere.util.on(window, "offline", function () {
-        atmosphere.unsubscribe();
+        if (requests.length > 0) {
+            var requestsClone = [].concat(requests);
+            for (var i = 0; i < requestsClone.length; i++) {
+                var rq = requestsClone[i];
+                rq.close();
+                clearTimeout(rq.response.request.id);
+
+                if (rq.heartbeatTimer) {
+                    clearTimeout(rq.heartbeatTimer);
+                }
+            }
+        }
+    });
+
+    atmosphere.util.on(window, "online", function () {
+        if (requests.length > 0) {
+            for (var i = 0; i < requests.length; i++) {
+                requests[i].execute();
+            }
+        }
     });
 
     return atmosphere;
