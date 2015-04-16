@@ -1,3 +1,5 @@
+**Notice:** This npm module, `atmoshere-client`, is replaced with [`atmosphere.js`](https://github.com/Atmosphere/atmosphere.js-node) and no longer maintained.
+
 Atmosphere.js for Node.js
 ==================
 
